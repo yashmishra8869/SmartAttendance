@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""
+AI-based Smart Attendance System - Real-time Recognition and Attendance Logging
+
+Usage examples:
+1) Default webcam, default tolerance:
+   python recognize_and_log.py
+
+2) Specify camera index and tolerance:
+   python recognize_and_log.py --camera-index 1 --tolerance 0.5
+
+3) Headless run (no GUI window), useful for servers:
+   python recognize_and_log.py --headless
+
+Notes:
+- This script loads face encodings from encodings.pkl.
+- When a known face is recognized, it logs Name, Date (YYYY-MM-DD), Time (HH:MM:SS) into attendance.csv.
+- Each student is logged at most once per day.
+- Bounding boxes and names are drawn on the video feed unless --headless is used.
+- Press 'q' to quit.
+"""
+
+import argparse
+import os
+import csv
+from datetime import datetime
+from typing import Dict, List, Tuple
+
+import cv2
+import numpy as np
+import face_recognition
+import pandas as pd
+
+ENCODINGS_PATH = "encodings.pkl"
+ATTENDANCE_CSV = "attendance.csv"
+
+
+def load_encodings(path: str) -> Dict[str, List]:
+    if not os.path.exists(path):
+        print("[WARN] encodings.pkl not found. Please run register_student.py first.")
+        return {"encodings": [], "names": []}
+    try:
+        import pickle
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        if not isinstance(data, dict) or "encodings" not in data or "names" not in data:
+            print("[WARN] encodings.pkl has invalid format. Recreate using register_student.py.")
+            return {"encodings": [], "names": []}
+        return data
+    except Exception as e:
+        print(f"[ERROR] Failed to load encodings: {e}")
+        return {"encodings": [], "names": []}
+
+
+def ensure_attendance_csv(path: str) -> None:
+    if not os.path.exists(path):
+        with open(path, mode="w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Name", "Date", "Time"])  # headers
+        print(f"[INFO] Created {path} with headers.")
+
+
+def has_marked_today(name: str, path: str) -> bool:
+    today = datetime.now().strftime("%Y-%m-%d")
+    if not os.path.exists(path):
+        return False
+    try:
+        df = pd.read_csv(path)
+        if df.empty:
+            return False
+        df_today = df[(df["Name"] == name) & (df["Date"] == today)]
+        return not df_today.empty
+    except Exception:
+        # Fallback to CSV reader if pandas fails
+        try:
+            with open(path, mode="r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("Name") == name and row.get("Date") == today:
+                        return True
+        except Exception:
+            return False
+    return False
+
+
+def mark_attendance(name: str, path: str) -> None:
+    ensure_attendance_csv(path)
+    if has_marked_today(name, path):
+        return
+    now = datetime.now()
+    row = [name, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")]
+    try:
+        with open(path, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
+        print(f"[INFO] Marked attendance: {row}")
+    except Exception as e:
+        print(f"[ERROR] Failed to write attendance: {e}")
+
+
+def _ensure_c_uint8(img: np.ndarray) -> np.ndarray:
+    """Force numpy array to be uint8, C-contiguous, owned memory (dlib compatibility)."""
+    return np.array(img, dtype=np.uint8, order='C')
+
+
+def _detect_faces_fallback(rgb_img: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    """Fallback detector using OpenCV Haar cascades. Returns (top,right,bottom,left)."""
+    try:
+        gray = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2GRAY)
+    except Exception:
+        return []
+    cascade_path = getattr(cv2.data, 'haarcascades', '') + 'haarcascade_frontalface_default.xml'
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+    if face_cascade.empty():
+        return []
+    rects = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+    boxes: List[Tuple[int, int, int, int]] = []
+    for (x, y, w, h) in rects:
+        boxes.append((y, x + w, y + h, x))
+    return boxes
+
+
+def recognize_and_log(camera_index: int, tolerance: float, headless: bool) -> None:
+    data = load_encodings(ENCODINGS_PATH)
+    known_encodings = data["encodings"]
+    known_names = data["names"]
+
+    if len(known_encodings) == 0:
+        print("[ERROR] No known encodings loaded. Register students first.")
+        return
+
+    ensure_attendance_csv(ATTENDANCE_CSV)
+
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        print("[ERROR] Cannot open webcam.")
+        return
+
+    print("[INFO] Press 'q' to quit.")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("[WARN] Failed to read frame from camera.")
+            break
+
+        # Resize frame to speed up processing
+        small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+        rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        rgb_small = _ensure_c_uint8(rgb_small)
+
+        # Detect and encode faces in small frame
+        try:
+            boxes = face_recognition.face_locations(rgb_small, model="hog")
+        except Exception:
+            boxes = []
+        if not boxes:
+            boxes = _detect_faces_fallback(rgb_small)
+        try:
+            encodings = face_recognition.face_encodings(rgb_small, boxes)
+        except Exception:
+            encodings = []
+
+        names_on_frame: List[str] = []
+
+        for enc, box in zip(encodings, boxes):
+            # Compare against known encodings
+            matches = face_recognition.compare_faces(known_encodings, enc, tolerance=tolerance)
+            name = "Unknown"
+
+            if True in matches:
+                matched_idxs = [i for i, b in enumerate(matches) if b]
+                # Voting: pick the name with most matches
+                counts: Dict[str, int] = {}
+                for i in matched_idxs:
+                    nm = known_names[i]
+                    counts[nm] = counts.get(nm, 0) + 1
+                name = max(counts, key=counts.get)
+                mark_attendance(name, ATTENDANCE_CSV)
+
+            names_on_frame.append(name)
+
+        if not headless:
+            # Draw on original frame using scaled boxes
+            for (top, right, bottom, left), name in zip(boxes, names_on_frame):
+                top *= 2; right *= 2; bottom *= 2; left *= 2
+                color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+                cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+                cv2.rectangle(frame, (left, bottom - 25), (right, bottom), color, cv2.FILLED)
+                cv2.putText(frame, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+            cv2.imshow("Smart Attendance - Press 'q' to quit", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                print("[INFO] Quit requested.")
+                break
+        else:
+            # In headless mode, still allow graceful exit if camera disconnects
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Recognize faces and log attendance in real-time.")
+    parser.add_argument("--camera-index", type=int, default=0, help="Webcam index (default: 0)")
+    parser.add_argument("--tolerance", type=float, default=0.6, help="Face match tolerance (lower = stricter, default: 0.6)")
+    parser.add_argument("--headless", action="store_true", help="Do not display video window")
+    args = parser.parse_args()
+
+    recognize_and_log(args.camera_index, args.tolerance, args.headless)
+
+
+if __name__ == "__main__":
+    main()

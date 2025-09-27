@@ -1,0 +1,412 @@
+﻿#!/usr/bin/env python3
+"""
+AI-based Smart Attendance System - Student Registration
+
+Usage examples:
+1) Capture from webcam (default camera index 0):
+   python register_student.py --name "Alice Johnson" --from-webcam --samples 15
+
+2) Register from a folder of existing images (JPG/PNG, 8-bit):
+   python register_student.py --name "Bob Smith" --images-dir ./images/bob
+
+3) Register from specific image files (wildcards supported):
+   python register_student.py --name "Charlie" --images img1.jpg img2.png "./mix/*.PNG"
+
+4) If a student already exists and you want to append more samples:
+   python register_student.py --name "Alice Johnson" --append --images-dir ./more_alice
+
+5) If a student already exists and you want to replace their data entirely:
+   python register_student.py --name "Alice Johnson" --replace --from-webcam --samples 20
+
+Dependencies:
+- Install required libraries first:
+    pip install -r requirements.txt
+
+Notes:
+- This script extracts face embeddings using the face_recognition library.
+- It stores all embeddings and names in encodings.pkl at the project root.
+- Images should be normal 8-bit JPG/PNG. Frames without a detectable single face are skipped.
+- Handle duplicate names with --append or --replace. Without these, duplicates are blocked.
+"""
+
+import argparse
+import os
+import sys
+import pickle
+import glob
+from typing import List, Tuple, Optional
+from pathlib import Path
+
+# Graceful imports with helpful messages
+try:
+    import cv2
+except ImportError:
+    print("[ERROR] Missing dependency: opencv-python. Install with: pip install -r requirements.txt")
+    sys.exit(1)
+
+try:
+    import numpy as np
+except ImportError:
+    print("[ERROR] Missing dependency: numpy. Install with: pip install -r requirements.txt")
+    sys.exit(1)
+
+try:
+    import face_recognition
+except ImportError:
+    print("[ERROR] Missing dependency: face_recognition. Install with: pip install -r requirements.txt")
+    sys.exit(1)
+
+ENCODINGS_PATH = "encodings.pkl"
+ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.bmp'}
+DEBUG = False
+
+
+def load_encodings(path: str) -> dict:
+    """Load encodings pickle if it exists, otherwise return empty structure."""
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+            # Basic structure validation
+            if not isinstance(data, dict) or "encodings" not in data or "names" not in data:
+                print("[WARN] encodings.pkl has unexpected format. Reinitializing.")
+                return {"encodings": [], "names": []}
+            return data
+        except Exception as e:
+            print(f"[ERROR] Failed to load encodings: {e}")
+            return {"encodings": [], "names": []}
+    else:
+        return {"encodings": [], "names": []}
+
+
+def save_encodings(path: str, data: dict) -> None:
+    """Save encodings structure to pickle."""
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"[INFO] Saved encodings to {path}")
+    except Exception as e:
+        print(f"[ERROR] Failed to save encodings: {e}")
+
+
+def _collect_from_dir(dir_path: Path) -> List[str]:
+    results: List[str] = []
+    # Recursive search; filter by allowed extensions (case-insensitive)
+    for p in dir_path.rglob('*'):
+        if p.is_file() and p.suffix.lower() in ALLOWED_EXTS:
+            results.append(str(p))
+    return results
+
+
+def get_image_paths(images: Optional[List[str]], images_dir: Optional[str]) -> List[str]:
+    """Collect image paths from explicit list (supports wildcards and directories) or a directory (recursive)."""
+    paths: List[str] = []
+
+    # From explicit items
+    if images:
+        for item in images:
+            if not item:
+                continue
+            # Expand wildcards if present
+            if any(ch in item for ch in ['*', '?', '[']):
+                for m in glob.glob(item):
+                    mp = Path(m)
+                    if mp.is_file() and mp.suffix.lower() in ALLOWED_EXTS:
+                        paths.append(str(mp))
+                    elif mp.is_dir():
+                        paths.extend(_collect_from_dir(mp))
+                continue
+
+            p = Path(item)
+            if p.is_file() and p.suffix.lower() in ALLOWED_EXTS:
+                paths.append(str(p))
+            elif p.is_dir():
+                paths.extend(_collect_from_dir(p))
+            else:
+                print(f"[WARN] Not found or unsupported type, skipping: {item}")
+
+    # From directory param
+    if images_dir:
+        d = Path(images_dir)
+        if d.is_dir():
+            paths.extend(_collect_from_dir(d))
+        else:
+            print(f"[WARN] Not a directory or not found: {images_dir}")
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_paths = []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
+    return unique_paths
+
+
+def to_rgb_uint8(image: np.ndarray) -> Optional[np.ndarray]:
+    """Convert any OpenCV-loaded image to RGB uint8 (handle grayscale, BGRA, 16-bit) and ensure C-contiguous."""
+    if image is None or image.size == 0:
+        return None
+
+    # Convert bit depth to 8-bit if needed
+    if image.dtype != np.uint8:
+        try:
+            if image.dtype == np.uint16:
+                image = cv2.convertScaleAbs(image, alpha=255.0 / 65535.0)
+            else:
+                image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        except Exception as e:
+            if DEBUG:
+                print(f"[DEBUG] Failed to normalize bit depth: {e}")
+            return None
+
+    try:
+        if len(image.shape) == 2:  # Grayscale
+            rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        elif len(image.shape) == 3:
+            h, w, c = image.shape
+            if c == 4:
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+            elif c == 3:
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                return None
+        else:
+            return None
+        # Ensure uint8 and C-contiguous
+        if rgb.dtype != np.uint8:
+            rgb = cv2.normalize(rgb, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        return np.ascontiguousarray(rgb)
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] Failed colorspace conversion: {e}")
+        return None
+
+
+def extract_face_encoding_from_image(img_any: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]:
+    """Return one face encoding and its location from the image, preferring the largest face.
+    Accepts images with various bit depths and channel counts; converts to RGB uint8.
+    Returns (encoding, location). If not found, returns (None, None).
+    """
+    img_rgb = to_rgb_uint8(img_any)
+    if img_rgb is None:
+        if DEBUG:
+            print("[DEBUG] to_rgb_uint8 returned None")
+        return None, None
+
+    # Final safeguard for dtype/contiguity
+    if img_rgb.dtype != np.uint8:
+        img_rgb = cv2.normalize(img_rgb, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    img_rgb = np.ascontiguousarray(img_rgb)
+
+    # Try RGB first
+    try:
+        boxes = face_recognition.face_locations(img_rgb, model="hog")
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] face_locations on RGB failed: {type(e).__name__}: {e}")
+            print(f"[DEBUG] img_rgb dtype: {img_rgb.dtype}, shape: {img_rgb.shape}, contiguous: {img_rgb.flags['C_CONTIGUOUS']}")
+        # Fallback: grayscale 2D
+        try:
+            gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+            boxes = face_recognition.face_locations(gray, model="hog")
+        except Exception as e2:
+            if DEBUG:
+                print(f"[DEBUG] face_locations on GRAY failed: {type(e2).__name__}: {e2}")
+            return None, None
+
+    if not boxes:
+        return None, None
+
+    # Choose largest face by area
+    def area(box):
+        top, right, bottom, left = box
+        return abs(bottom - top) * abs(right - left)
+
+    boxes_sorted = sorted(boxes, key=area, reverse=True)
+    box = boxes_sorted[0]
+
+    # Encode
+    try:
+        encs = face_recognition.face_encodings(img_rgb, [box])
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] face_encodings failed: {type(e).__name__}: {e}")
+        return None, None
+
+    if not encs:
+        return None, None
+    return encs[0], box
+
+
+def capture_encodings_from_webcam(samples: int, camera_index: int = 0) -> List[np.ndarray]:
+    """Capture encodings from webcam. Attempts to collect `samples` encodings where exactly one face is visible."""
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        print("[ERROR] Cannot open webcam. Check camera index or permissions.")
+        return []
+
+    collected: List[np.ndarray] = []
+    print("[INFO] Press 'q' to quit early.")
+
+    while len(collected) < samples:
+        ret, frame = cap.read()
+        if not ret:
+            print("[WARN] Failed to read frame from camera.")
+            break
+
+        small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+        small_rgb = to_rgb_uint8(small)
+        if small_rgb is None:
+            cv2.putText(frame, "Invalid frame format", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            cv2.imshow("Registration - Press 'q' to quit", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            continue
+
+        try:
+            boxes_small = face_recognition.face_locations(small_rgb, model="hog")
+        except Exception as e:
+            if DEBUG:
+                print(f"[DEBUG] face_locations (webcam) failed: {e}")
+            boxes_small = []
+
+        message = "Show exactly ONE face to the camera"
+        color = (0, 0, 255)
+
+        if len(boxes_small) == 1:
+            # Scale box back to original frame size
+            t, r, b, l = boxes_small[0]
+            top, right, bottom, left = t * 2, r * 2, b * 2, l * 2
+            full_rgb = to_rgb_uint8(frame)
+            enc = face_recognition.face_encodings(full_rgb, [(top, right, bottom, left)]) if full_rgb is not None else []
+            if enc:
+                collected.append(enc[0])
+                message = f"Captured sample {len(collected)}/{samples}"
+                color = (0, 255, 0)
+            else:
+                message = "Face detected but encoding failed"
+        elif len(boxes_small) > 1:
+            message = "Multiple faces detected - please ensure only one face is visible"
+        else:
+            message = "No face detected - align your face in view"
+
+        # Draw guidance rectangle on original frame (use the first detected box if any)
+        if len(boxes_small) >= 1:
+            t, r, b, l = boxes_small[0]
+            top, right, bottom, left = t * 2, r * 2, b * 2, l * 2
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 255), 2)
+
+        cv2.putText(frame, message, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        cv2.imshow("Registration - Press 'q' to quit", frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            print("[INFO] Early quit requested.")
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+    return collected
+
+
+def encodings_from_image_files(paths: List[str]) -> List[np.ndarray]:
+    encs: List[np.ndarray] = []
+    for p in paths:
+        # Read unchanged to detect alpha/bit depth, then convert
+        img = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            print(f"[WARN] Failed to read image: {p}")
+            continue
+        if DEBUG:
+            print(f"[DEBUG] Loaded {p}: dtype={img.dtype}, shape={getattr(img, 'shape', None)}")
+        enc, _ = extract_face_encoding_from_image(img)
+        if enc is None:
+            print(f"[WARN] No usable single face in: {p} (ensure 8-bit RGB/gray, clear face)")
+            continue
+        encs.append(enc)
+        print(f"[INFO] Processed: {p}")
+    return encs
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Register a student's face encodings for attendance.")
+    parser.add_argument("--name", required=True, help="Full name of the student to register")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--from-webcam", action="store_true", help="Capture samples from webcam")
+    mode.add_argument("--images-dir", type=str, help="Directory containing face images (recursive)")
+    mode.add_argument("--images", nargs="*", help="Specific image file(s) or patterns (supports wildcards)")
+    parser.add_argument("--samples", type=int, default=10, help="Number of samples to capture from webcam (default: 10)")
+    parser.add_argument("--camera-index", type=int, default=0, help="Webcam index (default: 0)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logs for image format issues")
+    dup = parser.add_mutually_exclusive_group()
+    dup.add_argument("--append", action="store_true", help="Append new samples if the name already exists")
+    dup.add_argument("--replace", action="store_true", help="Replace existing samples for this name")
+
+    args = parser.parse_args()
+
+    global DEBUG
+    DEBUG = bool(args.debug)
+
+    name = args.name.strip()
+    if not name:
+        print("[ERROR] Name cannot be empty.")
+        sys.exit(1)
+
+    data = load_encodings(ENCODINGS_PATH)
+    existing_names = data["names"]
+    has_duplicate = name in existing_names
+
+    if has_duplicate and not (args.append or args.replace):
+        print("[ERROR] This name already exists. Use --append to add more samples or --replace to overwrite.")
+        sys.exit(1)
+
+    # Collect encodings
+    new_encs: List[np.ndarray] = []
+    if args.from_webcam:
+        new_encs = capture_encodings_from_webcam(samples=max(1, args.samples), camera_index=args.camera_index)
+    else:
+        paths = get_image_paths(args.images, args.images_dir)
+        if not paths:
+            cwd = os.getcwd()
+            print("[ERROR] No images found to process.")
+            if args.images_dir:
+                print(f"[HINT] Checked directory (recursive): {Path(args.images_dir).resolve()} | CWD: {cwd}")
+                print("[HINT] Allowed extensions: .jpg, .jpeg, .png, .bmp")
+                print("[HINT] Example: python register_student.py --name \"Alice\" --images-dir ./images/alice")
+            if args.images is not None:
+                print("[HINT] You can pass wildcards, directories, or files to --images, e.g. --images ./folder \"./mix/*.PNG\" img1.jpg")
+            sys.exit(1)
+        new_encs = encodings_from_image_files(paths)
+
+    if not new_encs:
+        print("[ERROR] No encodings were captured. Nothing to save.")
+        sys.exit(1)
+
+    # Apply duplicate strategy
+    if has_duplicate and args.replace:
+        kept_encs = []
+        kept_names = []
+        removed = 0
+        for enc, nm in zip(data["encodings"], data["names"]):
+            if nm != name:
+                kept_encs.append(enc)
+                kept_names.append(nm)
+            else:
+                removed += 1
+        data["encodings"] = kept_encs
+        data["names"] = kept_names
+        print(f"[INFO] Replacing existing samples for '{name}'. Removed {removed} old samples.")
+
+    # Append new samples
+    data["encodings"].extend(new_encs)
+    data["names"].extend([name] * len(new_encs))
+
+    save_encodings(ENCODINGS_PATH, data)
+
+    print(f"[SUCCESS] Registered '{name}' with {len(new_encs)} new sample(s).")
+    print(f"[INFO] Total samples in database: {len(data['encodings'])}")
+
+
+if __name__ == "__main__":
+    main()
