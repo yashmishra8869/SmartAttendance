@@ -3,6 +3,7 @@ import io
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import os
 
 import cv2
 import numpy as np
@@ -11,10 +12,13 @@ import face_recognition
 import math
 import calendar
 
-# Paths resolved relative to project root (one level up from this file)
-ROOT_DIR = Path(__file__).resolve().parents[1]
-ENCODINGS_PATH = ROOT_DIR / "encodings.pkl"
-ATTENDANCE_CSV = ROOT_DIR / "attendance.csv"
+# Paths resolved from env var SMARTATTENDANCE_DATA_DIR if provided; fallback to project root
+_DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = Path(os.getenv("SMARTATTENDANCE_DATA_DIR", str(_DEFAULT_ROOT))).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ROOT_DIR = DATA_DIR
+ENCODINGS_PATH = DATA_DIR / "encodings.pkl"
+ATTENDANCE_CSV = DATA_DIR / "attendance.csv"
 
 # Locks to protect concurrent writes from the web server
 enc_lock = threading.Lock()
