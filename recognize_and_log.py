@@ -28,14 +28,27 @@ import csv
 from datetime import datetime
 from typing import Dict, List, Tuple
 import platform
+from pathlib import Path
 
 import cv2
 import numpy as np
 import face_recognition
 import pandas as pd
 
-ENCODINGS_PATH = "encodings.pkl"
-ATTENDANCE_CSV = "attendance.csv"
+# Use the same data directory scheme as the web app
+_DEFAULT_ROOT = Path(__file__).resolve().parent
+DATA_DIR = Path(os.getenv("SMARTATTENDANCE_DATA_DIR", str(_DEFAULT_ROOT))).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ENCODINGS_PATH = str(DATA_DIR / "encodings.pkl")
+ATTENDANCE_CSV = str(DATA_DIR / "attendance.csv")
+
+
+def _normalize_name(name: str) -> str:
+    try:
+        collapsed = " ".join(str(name).split())
+        return collapsed.title()
+    except Exception:
+        return str(name).strip()
 
 
 def load_encodings(path: str) -> Dict[str, List]:
@@ -56,6 +69,7 @@ def load_encodings(path: str) -> Dict[str, List]:
 
 
 def ensure_attendance_csv(path: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     if not os.path.exists(path):
         with open(path, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -65,20 +79,23 @@ def ensure_attendance_csv(path: str) -> None:
 
 def has_marked_today(name: str, path: str) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
+    norm = _normalize_name(name)
     if not os.path.exists(path):
         return False
     try:
         df = pd.read_csv(path)
         if df.empty:
             return False
-        df_today = df[(df["Name"] == name) & (df["Date"] == today)]
+        # normalize names column for robust match
+        df["Name"] = df["Name"].astype(str).map(_normalize_name)
+        df_today = df[(df["Name"] == norm) & (df["Date"] == today)]
         return not df_today.empty
     except Exception:
         try:
             with open(path, mode="r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if row.get("Name") == name and row.get("Date") == today:
+                    if _normalize_name(row.get("Name", "")) == norm and row.get("Date") == today:
                         return True
         except Exception:
             return False
@@ -87,10 +104,11 @@ def has_marked_today(name: str, path: str) -> bool:
 
 def mark_attendance(name: str, path: str) -> None:
     ensure_attendance_csv(path)
-    if has_marked_today(name, path):
+    norm = _normalize_name(name)
+    if has_marked_today(norm, path):
         return
     now = datetime.now()
-    row = [name, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")]
+    row = [norm, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")]
     try:
         with open(path, mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -289,6 +307,8 @@ def recognize_and_log(camera_index: int, tolerance: float, headless: bool, backe
         name = "Unknown"
         if encodings:
             name, score = _robust_match(encodings[0], known_encodings, known_names, tolerance)
+            if name != "Unknown":
+                name = _normalize_name(name)
 
         # Multi-frame consensus: require 3 consecutive frames of same name
         if name != "Unknown":

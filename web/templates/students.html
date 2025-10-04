@@ -69,8 +69,8 @@
     <form method="post" action="/students/remove">
       <div class="mb-3">
         <label class="form-label" for="removeNames">Names to Remove</label>
-        <input type="text" id="removeNames" name="names" class="form-control" placeholder="Comma separated (case-sensitive), e.g. Yash, John">
-        <div class="form-text">Case-sensitive exact match. Removes all samples for the exact names entered.</div>
+        <input type="text" id="removeNames" name="names" class="form-control" placeholder="Comma separated (case-insensitive), e.g. yash mishra, John">
+        <div class="form-text">Removal is case-insensitive and ignores extra spaces. Example: "  yAsH   mIshra " matches "Yash Mishra".</div>
       </div>
       <button class="btn btn-danger w-100" type="submit"><i class="bi bi-trash"></i> Remove</button>
     </form>

@@ -28,6 +28,17 @@ DEBUG = False
 DEFAULT_TOLERANCE = 0.62
 
 
+def normalize_name(name: str) -> str:
+    """Canonicalize a student's name: trim, collapse spaces, title-case.
+    Example: "  yAsH   mIshra " -> "Yash Mishra".
+    """
+    try:
+        collapsed = " ".join(str(name).split())
+        return collapsed.title()
+    except Exception:
+        return str(name).strip()
+
+
 def load_encodings(path: Path = ENCODINGS_PATH) -> Dict[str, List]:
     import pickle
     if not path.exists():
@@ -353,7 +364,10 @@ def _has_marked_today(name: str, path: Path = ATTENDANCE_CSV) -> bool:
     if df.empty:
         return False
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
-    df_today = df[(df["Name"].astype(str) == str(name)) & (df["Date"] == today)]
+    # normalize names when checking
+    df["Name"] = df["Name"].astype(str).map(normalize_name)
+    norm = normalize_name(name)
+    df_today = df[(df["Name"].astype(str) == norm) & (df["Date"] == today)]
     return not df_today.empty
 
 
@@ -372,10 +386,11 @@ def get_today_mark_time(name: str, path: Path = ATTENDANCE_CSV) -> Optional[str]
     if df.empty:
         return None
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
-    df_today = df[(df["Name"].astype(str) == str(name)) & (df["Date"] == today)]
+    df["Name"] = df["Name"].astype(str).map(normalize_name)
+    norm = normalize_name(name)
+    df_today = df[(df["Name"].astype(str) == norm) & (df["Date"] == today)]
     if df_today.empty:
         return None
-    # Return the earliest time of today for that name
     try:
         return str(df_today.iloc[0]["Time"])
     except Exception:
@@ -384,10 +399,11 @@ def get_today_mark_time(name: str, path: Path = ATTENDANCE_CSV) -> Optional[str]
 
 def mark_attendance(name: str, path: Path = ATTENDANCE_CSV) -> None:
     ensure_attendance_csv(path)
-    if _has_marked_today(name, path):
+    norm = normalize_name(name)
+    if _has_marked_today(norm, path):
         return
     now = pd.Timestamp.now()
-    row = f"{name},{now.strftime('%Y-%m-%d')},{now.strftime('%H:%M:%S')}\n"
+    row = f"{norm},{now.strftime('%Y-%m-%d')},{now.strftime('%H:%M:%S')}\n"
     with att_lock:
         with open(path, "a", encoding="utf-8") as f:
             f.write(row)
@@ -405,9 +421,17 @@ def compute_monthly_attendance(path: Path, year: int, month: int) -> List[Dict]:
     if df["Date"].dtype != "datetime64[ns]":
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df = df.dropna(subset=["Date"])  # drop unparsable
+    # Normalize names for grouping
+    df["Name"] = df["Name"].astype(str).map(normalize_name)
+
     df_month = df[(df["Date"].dt.year == year) & (df["Date"].dt.month == month)]
     if df_month.empty:
-        return []
+        # Even if empty, include registered names with 0
+        total_days = 0
+        enc = load_encodings()
+        all_names = sorted({normalize_name(nm) for nm in enc.get("names", [])}, key=lambda x: x.lower())
+        return [{"name": nm, "days_present": 0, "total_days": int(total_days), "percent": 0.0} for nm in all_names]
+
     total_days = df_month["Date"].dt.date.nunique()
     present = (
         df_month.assign(Day=df_month["Date"].dt.date)
@@ -426,7 +450,7 @@ def compute_monthly_attendance(path: Path, year: int, month: int) -> List[Dict]:
         })
     # Include names with 0 days present (registered but absent entire month)
     enc = load_encodings()
-    all_names = sorted(set(enc.get("names", [])))
+    all_names = sorted({normalize_name(nm) for nm in enc.get("names", [])})
     already = {r["name"] for r in results}
     for nm in all_names:
         if nm not in already:
@@ -470,13 +494,15 @@ def compute_monthly_presence(path: Path, year: int, month: int) -> Dict:
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df = df.dropna(subset=["Date"])  # drop unparsable
         df["Day"] = df["Date"].dt.date
+        # Normalize names
+        df["Name"] = df["Name"].astype(str).map(normalize_name)
         df_month = df[(df["Date"].dt.year == year) & (df["Date"].dt.month == month)]
     else:
         df_month = df
 
-    # Name universe = registered names ? names in this month's records
+    # Name universe = registered names ? names in this month's records (normalized)
     enc = load_encodings()
-    reg_names = set(enc.get("names", []))
+    reg_names = {normalize_name(nm) for nm in enc.get("names", [])}
     present_names = set(df_month["Name"].astype(str).unique()) if not df_month.empty else set()
     all_names = sorted((reg_names | present_names), key=lambda x: str(x).lower())
 
@@ -525,12 +551,14 @@ def decode_base64_image_uri(uri: str) -> Optional[np.ndarray]:
 
 
 def remove_students_by_names(names: List[str], path: Path = ENCODINGS_PATH) -> Dict[str, int]:
-    """Remove all encodings for the given names (case-sensitive exact match).
-    Returns a dict of { name: removed_count } for names that were found.
+    """Remove all encodings for the given names (case-insensitive; normalized).
+    Returns a dict of { normalized_name: removed_count } for names that were found.
     """
-    targets = [str(n).strip() for n in names if str(n).strip()]
+    targets = [normalize_name(n) for n in names if str(n).strip()]
     if not targets:
         return {}
+    target_set = set(targets)
+
     data = load_encodings(path)
     encs = data.get("encodings", [])
     nms = data.get("names", [])
@@ -541,11 +569,11 @@ def remove_students_by_names(names: List[str], path: Path = ENCODINGS_PATH) -> D
     kept_names: List[str] = []
     removed: Dict[str, int] = {}
 
-    target_set = set(targets)
     for enc, nm in zip(encs, nms):
         nm_str = str(nm)
-        if nm_str in target_set:
-            removed[nm_str] = removed.get(nm_str, 0) + 1
+        nn = normalize_name(nm_str)
+        if nn in target_set:
+            removed[nn] = removed.get(nn, 0) + 1
             continue
         kept_encs.append(enc)
         kept_names.append(nm)

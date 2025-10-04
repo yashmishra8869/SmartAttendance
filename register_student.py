@@ -56,9 +56,23 @@ except ImportError:
     print("[ERROR] Missing dependency: face_recognition. Install with: pip install -r requirements.txt")
     sys.exit(1)
 
-ENCODINGS_PATH = "encodings.pkl"
+# Use the same data directory scheme as the web app
+_DEFAULT_ROOT = Path(__file__).resolve().parent
+DATA_DIR = Path(os.getenv("SMARTATTENDANCE_DATA_DIR", str(_DEFAULT_ROOT))).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ENCODINGS_PATH = str(DATA_DIR / "encodings.pkl")
+
 ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 DEBUG = False
+
+
+def _normalize_name(name: str) -> str:
+    # collapse spaces and title-case
+    try:
+        collapsed = " ".join(str(name).split())
+        return collapsed.title()
+    except Exception:
+        return str(name).strip()
 
 
 def load_encodings(path: str) -> dict:
@@ -81,6 +95,7 @@ def load_encodings(path: str) -> dict:
 
 def save_encodings(path: str, data: dict) -> None:
     """Save encodings structure to pickle."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     try:
         with open(path, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -476,14 +491,16 @@ def main():
     global DEBUG
     DEBUG = bool(args.debug)
 
-    name = args.name.strip()
+    raw_name = args.name
+    name = _normalize_name(raw_name)
     if not name:
         print("[ERROR] Name cannot be empty.")
         sys.exit(1)
 
     data = load_encodings(ENCODINGS_PATH)
     existing_names = data["names"]
-    has_duplicate = name in existing_names
+    existing_norm = {_normalize_name(nm) for nm in existing_names}
+    has_duplicate = name in existing_norm
 
     if has_duplicate and not (args.append or args.replace):
         print("[ERROR] This name already exists. Use --append to add more samples or --replace to overwrite.")
@@ -518,7 +535,7 @@ def main():
         kept_names = []
         removed = 0
         for enc, nm in zip(data["encodings"], data["names"]):
-            if nm != name:
+            if _normalize_name(nm) != name:
                 kept_encs.append(enc)
                 kept_names.append(nm)
             else:
@@ -527,7 +544,7 @@ def main():
         data["names"] = kept_names
         print(f"[INFO] Replacing existing samples for '{name}'. Removed {removed} old samples.")
 
-    # Append new samples
+    # Append new samples, store normalized display name
     data["encodings"].extend(new_encs)
     data["names"].extend([name] * len(new_encs))
 

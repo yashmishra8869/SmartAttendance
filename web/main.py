@@ -26,6 +26,7 @@ from .face_utils import (
     has_marked_today,
     get_today_mark_time,
     compute_monthly_presence,
+    normalize_name,
 )
 
 app = FastAPI(title="SmartAttendanceWeb")
@@ -39,13 +40,19 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 templates = Jinja2Templates(directory=str(templates_dir))
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 def _students_with_counts() -> List[dict]:
     data = load_encodings(ENCODINGS_PATH)
     names = data.get("names", [])
-    # count samples per name
+    # count samples per normalized name
     counts = {}
     for nm in names:
-        counts[nm] = counts.get(nm, 0) + 1
+        nn = normalize_name(nm)
+        counts[nn] = counts.get(nn, 0) + 1
     return [{"name": nm, "samples": cnt} for nm, cnt in sorted(counts.items(), key=lambda x: x[0].lower())]
 
 
@@ -105,7 +112,7 @@ async def api_attendance(month: str):
 
 @app.post("/api/register")
 async def api_register(name: str = Form(...), images: List[UploadFile] = File(...)):
-    name = name.strip()
+    name = normalize_name(name)
     if not name:
         return JSONResponse(status_code=400, content={"error": "Name is required"})
     data = load_encodings(ENCODINGS_PATH)
@@ -124,13 +131,13 @@ async def api_register(name: str = Form(...), images: List[UploadFile] = File(..
     if added == 0:
         return JSONResponse(status_code=400, content={"error": "No usable faces found in uploads"})
     save_encodings(data, ENCODINGS_PATH)
-    total = sum(1 for n in data["names"] if n == name)
+    total = sum(1 for n in data["names"] if normalize_name(n) == name)
     return {"name": name, "added_samples": added, "total_samples_for_name": total}
 
 
 @app.post("/api/register-webcam")
 async def api_register_webcam(payload: dict = Body(...)):
-    name = str(payload.get("name", "")).strip()
+    name = normalize_name(str(payload.get("name", "")))
     frames = payload.get("frames", [])  # array of base64 data URLs or plain base64
     if not name:
         return JSONResponse(status_code=400, content={"error": "Name is required"})
@@ -151,7 +158,7 @@ async def api_register_webcam(payload: dict = Body(...)):
     if added == 0:
         return JSONResponse(status_code=400, content={"error": "No usable faces found in frames"})
     save_encodings(data, ENCODINGS_PATH)
-    total = sum(1 for n in data["names"] if n == name)
+    total = sum(1 for n in data["names"] if normalize_name(n) == name)
     return {"name": name, "added_samples": added, "total_samples_for_name": total}
 
 
