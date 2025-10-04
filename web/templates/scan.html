@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+<h3 class="mb-3">Scan</h3>
+<p class="text-muted">Click the button to open your camera and mark attendance. One mark per day.</p>
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="video-box">
+      <video id="cam" autoplay playsinline class="w-100" style="max-height:420px"></video>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column gap-2">
+        <div>
+          <button class="btn btn-primary w-100" id="markBtn" type="button">
+            <i class="bi bi-person-check"></i> Mark my attendance
+          </button>
+        </div>
+        <div class="mt-2"><span id="status" class="toast-like">Idle</span></div>
+        <pre id="debugBox" class="small text-muted d-none" style="white-space:pre-wrap;max-height:200px;overflow:auto"></pre>
+        <ul class="small text-muted mb-0">
+          <li>Ensure good lighting and face centered</li>
+          <li>Remove sunglasses/masks for best results</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<canvas id="canvas" class="d-none"></canvas>
+<script>
+  const cam = document.getElementById('cam');
+  const canvas = document.getElementById('canvas');
+  const statusEl = document.getElementById('status');
+  const markBtn = document.getElementById('markBtn');
+  const debugBox = document.getElementById('debugBox');
+
+  let timer = null;
+  let stream = null;
+  let scanning = false;
+  let inFlight = false;
+
+  let lastName = null;
+  let consecutive = 0;
+  const requiredConsensus = 3; // align with CLI
+  const url = new URL(window.location.href);
+  const sendDebug = url.searchParams.get('debug') === '1';
+
+  async function startCamera() {
+    if (stream) return;
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      audio: false
+    });
+    cam.srcObject = stream; await cam.play();
+    statusEl.textContent = 'Camera started';
+  }
+
+  function stopCamera() {
+    if (timer) { clearInterval(timer); timer = null; }
+    scanning = false; inFlight = false; lastName = null; consecutive = 0;
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    cam.srcObject = null; try { cam.pause(); } catch {}
+    if (markBtn) { markBtn.disabled = false; markBtn.innerHTML = '<i class="bi bi-person-check"></i> Mark my attendance'; }
+  }
+
+  async function ensureCanvasSize() {
+    // scale down to reduce payload and CPU
+    if (!cam.videoWidth || !cam.videoHeight) { await new Promise(r => setTimeout(r, 100)); }
+    const targetW = Math.max(320, Math.floor((cam.videoWidth || 640) / 2));
+    const ratio = (cam.videoHeight || 480) / (cam.videoWidth || 640);
+    canvas.width = targetW;
+    canvas.height = Math.floor(targetW * ratio);
+    canvas.getContext('2d').imageSmoothingEnabled = false;
+  }
+
+  async function startScanning() {
+    if (scanning) return; scanning = true;
+    await startCamera(); await ensureCanvasSize();
+    const ctx = canvas.getContext('2d');
+
+    async function tick() {
+      if (inFlight) return; // avoid overlap
+      if (!stream) return; if (cam.readyState < 2) return;
+      ctx.drawImage(cam, 0, 0, canvas.width, canvas.height);
+      const b64 = canvas.toDataURL('image/jpeg', 0.75); // smaller payload
+      const body = sendDebug ? { image: b64, debug: true } : { image: b64 };
+      inFlight = true;
+      try {
+        const res = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!res.ok) {
+          const txt = await res.text();
+          statusEl.textContent = `Scan error ${res.status}: ${txt}`;
+          return;
+        }
+        const js = await res.json();
+        if (sendDebug && js.debug) {
+          debugBox.classList.remove('d-none');
+          debugBox.textContent = JSON.stringify(js.debug, null, 2);
+        }
+        if (js.name && js.name !== 'Unknown') {
+          if (js.already_marked) {
+            statusEl.textContent = `Attendance already marked for ${js.name} at ${js.time}`;
+            statusEl.classList.add('bg-success','text-white');
+            stopCamera();
+            return;
+          }
+          if (lastName === js.name) { consecutive++; } else { lastName = js.name; consecutive = 1; }
+          statusEl.textContent = `Verifying ${js.name} (${consecutive}/${requiredConsensus})...`;
+          if (consecutive >= requiredConsensus) {
+            statusEl.textContent = `Marked for ${js.name} at ${js.time}`;
+            statusEl.classList.add('bg-success','text-white');
+            stopCamera();
+          }
+        } else {
+          lastName = null; consecutive = 0;
+          statusEl.textContent = 'Unknown - ensure you are registered and well-lit';
+          statusEl.classList.remove('bg-success','text-white');
+        }
+      } catch (e) {
+        statusEl.textContent = 'Scan failed';
+      } finally {
+        inFlight = false;
+      }
+    }
+    if (!timer) { timer = setInterval(tick, 1000); }
+  }
+
+  if (markBtn) {
+    markBtn.addEventListener('click', async () => {
+      markBtn.disabled = true;
+      markBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Scanning...';
+      try { await startScanning(); } catch { stopCamera(); }
+    });
+  }
+
+  window.addEventListener('beforeunload', () => { stopCamera(); });
+</script>
+{% endblock %}
