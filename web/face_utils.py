@@ -17,8 +17,28 @@ _DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.getenv("SMARTATTENDANCE_DATA_DIR", str(_DEFAULT_ROOT))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 ROOT_DIR = DATA_DIR
-ENCODINGS_PATH = DATA_DIR / "encodings.pkl"
-ATTENDANCE_CSV = DATA_DIR / "attendance.csv"
+
+# Optional fine-grained overrides
+_ATT_DIR_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_DIR")
+_ATT_CSV_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_CSV")
+_ENC_PATH_ENV = os.getenv("SMARTATTENDANCE_ENCODINGS_PATH")
+
+# Resolve encodings path
+if _ENC_PATH_ENV and _ENC_PATH_ENV.strip():
+    ENCODINGS_PATH = Path(_ENC_PATH_ENV).expanduser().resolve()
+    ENCODINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+else:
+    ENCODINGS_PATH = DATA_DIR / "encodings.pkl"
+
+# Resolve attendance CSV path
+if _ATT_CSV_ENV and _ATT_CSV_ENV.strip():
+    ATTENDANCE_CSV = Path(_ATT_CSV_ENV).expanduser().resolve()
+    ATTENDANCE_CSV.parent.mkdir(parents=True, exist_ok=True)
+elif _ATT_DIR_ENV and _ATT_DIR_ENV.strip():
+    ATTENDANCE_CSV = Path(_ATT_DIR_ENV).expanduser().resolve() / "attendance.csv"
+    ATTENDANCE_CSV.parent.mkdir(parents=True, exist_ok=True)
+else:
+    ATTENDANCE_CSV = DATA_DIR / "attendance.csv"
 
 # Locks to protect concurrent writes from the web server
 enc_lock = threading.Lock()
@@ -56,6 +76,7 @@ def load_encodings(path: Path = ENCODINGS_PATH) -> Dict[str, List]:
 def save_encodings(data: Dict[str, List], path: Path = ENCODINGS_PATH) -> None:
     import pickle
     with enc_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -551,6 +572,7 @@ def decode_base64_image_uri(uri: str) -> Optional[np.ndarray]:
 
 
 def remove_students_by_names(names: List[str], path: Path = ENCODINGS_PATH) -> Dict[str, int]:
+
     """Remove all encodings for the given names (case-insensitive; normalized).
     Returns a dict of { normalized_name: removed_count } for names that were found.
     """

@@ -35,20 +35,29 @@ import numpy as np
 import face_recognition
 import pandas as pd
 
-# Use the same data directory scheme as the web app
+# Use the same data directory scheme and overrides as the web app
 _DEFAULT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("SMARTATTENDANCE_DATA_DIR", str(_DEFAULT_ROOT))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-ENCODINGS_PATH = str(DATA_DIR / "encodings.pkl")
-ATTENDANCE_CSV = str(DATA_DIR / "attendance.csv")
 
+_ENC_PATH_ENV = os.getenv("SMARTATTENDANCE_ENCODINGS_PATH", "").strip()
+_ATT_CSV_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_CSV", "").strip()
+_ATT_DIR_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_DIR", "").strip()
 
-def _normalize_name(name: str) -> str:
-    try:
-        collapsed = " ".join(str(name).split())
-        return collapsed.title()
-    except Exception:
-        return str(name).strip()
+if _ENC_PATH_ENV:
+    ENCODINGS_PATH = str(Path(_ENC_PATH_ENV).expanduser().resolve())
+    Path(ENCODINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+else:
+    ENCODINGS_PATH = str(DATA_DIR / "encodings.pkl")
+
+if _ATT_CSV_ENV:
+    ATTENDANCE_CSV = str(Path(_ATT_CSV_ENV).expanduser().resolve())
+    Path(ATTENDANCE_CSV).parent.mkdir(parents=True, exist_ok=True)
+elif _ATT_DIR_ENV:
+    ATTENDANCE_CSV = str(Path(_ATT_DIR_ENV).expanduser().resolve() / "attendance.csv")
+    Path(ATTENDANCE_CSV).parent.mkdir(parents=True, exist_ok=True)
+else:
+    ATTENDANCE_CSV = str(DATA_DIR / "attendance.csv")
 
 
 def load_encodings(path: str) -> Dict[str, List]:
@@ -79,23 +88,28 @@ def ensure_attendance_csv(path: str) -> None:
 
 def has_marked_today(name: str, path: str) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
-    norm = _normalize_name(name)
     if not os.path.exists(path):
         return False
     try:
         df = pd.read_csv(path)
         if df.empty:
             return False
-        # normalize names column for robust match
-        df["Name"] = df["Name"].astype(str).map(_normalize_name)
-        df_today = df[(df["Name"] == norm) & (df["Date"] == today)]
+        # Normalize names similar to the web app (collapse spaces, title-case)
+        def _norm(n: str) -> str:
+            try:
+                return " ".join(str(n).split()).title()
+            except Exception:
+                return str(n).strip()
+        df["Name"] = df["Name"].astype(str).map(_norm)
+        name_n = _norm(name)
+        df_today = df[(df["Name"] == name_n) & (df["Date"] == today)]
         return not df_today.empty
     except Exception:
         try:
             with open(path, mode="r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if _normalize_name(row.get("Name", "")) == norm and row.get("Date") == today:
+                    if row.get("Name") == name and row.get("Date") == today:
                         return True
         except Exception:
             return False
@@ -104,11 +118,15 @@ def has_marked_today(name: str, path: str) -> bool:
 
 def mark_attendance(name: str, path: str) -> None:
     ensure_attendance_csv(path)
-    norm = _normalize_name(name)
-    if has_marked_today(norm, path):
+    if has_marked_today(name, path):
         return
+    # Normalize name for consistency
+    try:
+        name = " ".join(str(name).split()).title()
+    except Exception:
+        name = str(name).strip()
     now = datetime.now()
-    row = [norm, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")]
+    row = [name, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")]
     try:
         with open(path, mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -307,8 +325,6 @@ def recognize_and_log(camera_index: int, tolerance: float, headless: bool, backe
         name = "Unknown"
         if encodings:
             name, score = _robust_match(encodings[0], known_encodings, known_names, tolerance)
-            if name != "Unknown":
-                name = _normalize_name(name)
 
         # Multi-frame consensus: require 3 consecutive frames of same name
         if name != "Unknown":

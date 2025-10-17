@@ -56,11 +56,16 @@ except ImportError:
     print("[ERROR] Missing dependency: face_recognition. Install with: pip install -r requirements.txt")
     sys.exit(1)
 
-# Use the same data directory scheme as the web app
+# Paths: prefer explicit SMARTATTENDANCE_ENCODINGS_PATH, then SMARTATTENDANCE_DATA_DIR
 _DEFAULT_ROOT = Path(__file__).resolve().parent
+_ENC_PATH_ENV = os.getenv("SMARTATTENDANCE_ENCODINGS_PATH", "").strip()
 DATA_DIR = Path(os.getenv("SMARTATTENDANCE_DATA_DIR", str(_DEFAULT_ROOT))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-ENCODINGS_PATH = str(DATA_DIR / "encodings.pkl")
+if _ENC_PATH_ENV:
+    ENCODINGS_PATH = str(Path(_ENC_PATH_ENV).expanduser().resolve())
+    Path(ENCODINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+else:
+    ENCODINGS_PATH = str(DATA_DIR / "encodings.pkl")
 
 ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 DEBUG = False

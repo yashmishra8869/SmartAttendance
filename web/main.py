@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 import uvicorn
 import numpy as np
 import pandas as pd
+import os
 
 from .face_utils import (
     ROOT_DIR,
@@ -45,14 +46,39 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/state")
+async def debug_state():
+    # Help verify what files the server is using
+    ensure_attendance_csv(ATTENDANCE_CSV)
+    csv_path = str(ATTENDANCE_CSV)
+    enc_path = str(ENCODINGS_PATH)
+    env_dir = os.getenv("SMARTATTENDANCE_DATA_DIR")
+    exists = Path(ATTENDANCE_CSV).exists()
+    size = os.path.getsize(csv_path) if exists else 0
+    last_rows = []
+    try:
+        df = pd.read_csv(ATTENDANCE_CSV)
+        last_rows = df.tail(5).to_dict(orient="records")
+    except Exception:
+        last_rows = []
+    return {
+        "env.SMARTATTENDANCE_DATA_DIR": env_dir,
+        "attendance_csv": csv_path,
+        "attendance_exists": exists,
+        "attendance_size": int(size),
+        "encodings_path": enc_path,
+        "recent_rows": last_rows,
+    }
+
+
 def _students_with_counts() -> List[dict]:
     data = load_encodings(ENCODINGS_PATH)
     names = data.get("names", [])
     # count samples per normalized name
     counts = {}
     for nm in names:
-        nn = normalize_name(nm)
-        counts[nn] = counts.get(nn, 0) + 1
+        canon = normalize_name(str(nm))
+        counts[canon] = counts.get(canon, 0) + 1
     return [{"name": nm, "samples": cnt} for nm, cnt in sorted(counts.items(), key=lambda x: x[0].lower())]
 
 
@@ -202,6 +228,7 @@ async def api_scan(request: Request, file: UploadFile | None = File(None), paylo
         info = None
 
     if name != "Unknown":
+        name = normalize_name(name)
         # already marked handling
         if has_marked_today(name, ATTENDANCE_CSV):
             prior = get_today_mark_time(name, ATTENDANCE_CSV)
