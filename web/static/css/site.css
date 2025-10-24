@@ -49,3 +49,20 @@ body{min-height:100vh;background-color:#f3f7ff}
   .summary-card .value{font-size:1.2rem}
   .hero{padding:1rem}
 }
+
+/* Dark theme overrides using Bootstrap 5.3 data attribute */
+html[data-bs-theme="dark"] body{background-color:#0b1020}
+html[data-bs-theme="dark"] .sidebar{background:#0f172a;border-color:#1f2937}
+html[data-bs-theme="dark"] .sidebar .nav-link{color:#cbd5e1}
+html[data-bs-theme="dark"] .sidebar .nav-link:hover{background:#1f2937;color:#e2e8f0}
+html[data-bs-theme="dark"] .sidebar .nav-link.active{background:#1e3a8a;color:#fff}
+html[data-bs-theme="dark"] .card{background:#0f172a;border-color:#1f2937;color:#e2e8f0}
+html[data-bs-theme="dark"] .footer{color:#94a3b8}
+html[data-bs-theme="dark"] .table{color:#e2e8f0}
+html[data-bs-theme="dark"] .table thead th{color:#a5b4fc}
+html[data-bs-theme="dark"] .form-control{background:#0b1220;color:#e2e8f0;border-color:#1f2937}
+html[data-bs-theme="dark"] .form-control::placeholder{color:#94a3b8}
+html[data-bs-theme="dark"] .form-control:focus{border-color:#334155;box-shadow:0 0 0 .2rem rgba(59,130,246,.15)}
+html[data-bs-theme="dark"] .btn.btn-outline-secondary{color:#e2e8f0;border-color:#334155}
+html[data-bs-theme="dark"] .btn.btn-outline-secondary:hover{background:#1f2937}
+html[data-bs-theme="dark"] .hero{box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}

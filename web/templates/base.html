@@ -21,15 +21,19 @@
           <i class="bi bi-mortarboard"></i>
           <span>SmartAttendance</span>
         </a>
+        <button class="btn btn-outline-secondary" id="themeToggleMobile" aria-label="Toggle theme"><i class="bi bi-moon-stars"></i></button>
       </div>
     </header>
 
     <div class="layout container-fluid">
       <!-- Sidebar -->
       <aside id="sidebar" class="sidebar d-flex flex-column">
-        <div class="brand d-none d-lg-flex align-items-center gap-2 mb-3">
-          <i class="bi bi-mortarboard fs-4 text-primary"></i>
-          <span class="fw-bold">SmartAttendance</span>
+        <div class="d-none d-lg-flex align-items-center justify-content-between mb-3">
+          <div class="brand d-flex align-items-center gap-2">
+            <i class="bi bi-mortarboard fs-4 text-primary"></i>
+            <span class="fw-bold">SmartAttendance</span>
+          </div>
+          <button class="btn btn-outline-secondary" id="themeToggleDesktop" aria-label="Toggle theme"><i class="bi bi-moon-stars"></i></button>
         </div>
         <nav class="nav flex-column gap-1" aria-label="Main navigation">
           <a class="nav-link d-flex align-items-center gap-2" href="/">
@@ -61,6 +65,33 @@
         const sidebar = document.getElementById('sidebar');
         const toggle = document.getElementById('sidebarToggle');
         if(toggle && sidebar){ toggle.addEventListener('click', ()=> sidebar.classList.toggle('open')); }
+
+        // Theme toggle (light/dark) with persistence
+        const LS_KEY = 'sa-theme';
+        const docEl = document.documentElement;
+        const btns = [
+          document.getElementById('themeToggleMobile'),
+          document.getElementById('themeToggleDesktop')
+        ].filter(Boolean);
+        function updateIcon(theme){
+          btns.forEach(b=>{
+            const i = b.querySelector('i');
+            if(!i) return;
+            // Show sun in dark mode (to indicate turning light on), moon in light mode
+            i.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars';
+          });
+        }
+        function applyTheme(theme){
+          docEl.setAttribute('data-bs-theme', theme);
+          localStorage.setItem(LS_KEY, theme);
+          updateIcon(theme);
+        }
+        const preferred = localStorage.getItem(LS_KEY) || 'light';
+        applyTheme(preferred);
+        btns.forEach(b=> b.addEventListener('click', ()=>{
+          const cur = docEl.getAttribute('data-bs-theme') || 'light';
+          applyTheme(cur === 'dark' ? 'light' : 'dark');
+        }));
       })();
     </script>
   </body>

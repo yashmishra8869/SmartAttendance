@@ -22,6 +22,17 @@ ROOT_DIR = DATA_DIR
 _ATT_DIR_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_DIR")
 _ATT_CSV_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_CSV")
 _ENC_PATH_ENV = os.getenv("SMARTATTENDANCE_ENCODINGS_PATH")
+_DB_URL = os.getenv("SMARTATTENDANCE_DB_URL", "").strip()
+USE_DB = bool(_DB_URL)
+
+if USE_DB:
+    try:
+        # Lazy import to avoid requiring SQLAlchemy when not used
+        from . import db as dbmod
+        dbmod.ensure_tables()
+    except Exception:
+        # If DB init fails, fall back to CSV mode
+        USE_DB = False
 
 # Resolve encodings path
 if _ENC_PATH_ENV and _ENC_PATH_ENV.strip():
@@ -370,6 +381,9 @@ def recognize_from_image_with_debug(img_any: np.ndarray, known_encodings: List[n
 
 
 def ensure_attendance_csv(path: Path = ATTENDANCE_CSV) -> None:
+    if USE_DB:
+        # Tables are ensured at import; nothing to do for CSV
+        return
     if not path.exists():
         with att_lock:
             if not path.exists():
@@ -377,6 +391,11 @@ def ensure_attendance_csv(path: Path = ATTENDANCE_CSV) -> None:
 
 
 def _has_marked_today(name: str, path: Path = ATTENDANCE_CSV) -> bool:
+    if USE_DB:
+        try:
+            return bool(dbmod.has_marked_today(name))
+        except Exception:
+            return False
     ensure_attendance_csv(path)
     try:
         df = pd.read_csv(path)
@@ -399,6 +418,11 @@ def has_marked_today(name: str, path: Path = ATTENDANCE_CSV) -> bool:
 
 # New: get the recorded time for today's mark if it exists
 def get_today_mark_time(name: str, path: Path = ATTENDANCE_CSV) -> Optional[str]:
+    if USE_DB:
+        try:
+            return dbmod.get_today_mark_time(name)
+        except Exception:
+            return None
     ensure_attendance_csv(path)
     try:
         df = pd.read_csv(path)
@@ -419,6 +443,12 @@ def get_today_mark_time(name: str, path: Path = ATTENDANCE_CSV) -> Optional[str]
 
 
 def mark_attendance(name: str, path: Path = ATTENDANCE_CSV) -> None:
+    if USE_DB:
+        try:
+            dbmod.mark_attendance(name)
+        except Exception:
+            pass
+        return
     ensure_attendance_csv(path)
     norm = normalize_name(name)
     if _has_marked_today(norm, path):
@@ -431,13 +461,26 @@ def mark_attendance(name: str, path: Path = ATTENDANCE_CSV) -> None:
 
 
 def compute_monthly_attendance(path: Path, year: int, month: int) -> List[Dict]:
-    ensure_attendance_csv(path)
-    try:
-        df = pd.read_csv(path, parse_dates=["Date"])
-    except Exception:
-        return []
-    if df.empty:
-        return []
+    if USE_DB:
+        try:
+            rows = dbmod.fetch_month(year, month)
+            if not rows:
+                enc = load_encodings()
+                all_names = sorted({normalize_name(nm) for nm in enc.get("names", [])}, key=lambda x: x.lower())
+                return [{"name": nm, "days_present": 0, "total_days": 0, "percent": 0.0} for nm in all_names]
+            df = pd.DataFrame(rows)
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        except Exception:
+            return []
+    else:
+        ensure_attendance_csv(path)
+        try:
+            df = pd.read_csv(path, parse_dates=["Date"])
+        except Exception:
+            return []
+        if df.empty:
+            return []
+
     # Normalize Date column
     if df["Date"].dtype != "datetime64[ns]":
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -490,24 +533,32 @@ def compute_monthly_presence(path: Path, year: int, month: int) -> Dict:
     """Return a day-wise presence matrix for the given month.
     Output schema:
       {
-        "days_labels": ["01", "02", ...],          # day numbers as strings
-        "days_iso":    ["YYYY-MM-01", ...],         # ISO dates for the month days
-        "names":       ["Alice", "Bob", ...],       # sorted unique names (registered ? present)
-        "presence":    { name: [True/False, ...] },   # len == number of days in month
+        "days_labels": ["01", "02", ...],
+        "days_iso":    ["YYYY-MM-01", ...],
+        "names":       ["Alice", "Bob", ...],
+        "presence":    { name: [True/False, ...] },
         "total_days":  int
       }
     """
-    ensure_attendance_csv(path)
+    if not USE_DB:
+        ensure_attendance_csv(path)
     # Build full list of calendar days in the month
     last_day = calendar.monthrange(year, month)[1]
     idx_dates = [pd.Timestamp(year=year, month=month, day=d).date() for d in range(1, last_day + 1)]
     days_labels = [f"{d:02d}" for d in range(1, last_day + 1)]
     days_iso = [f"{year:04d}-{month:02d}-{d:02d}" for d in range(1, last_day + 1)]
 
-    try:
-        df = pd.read_csv(path, parse_dates=["Date"])
-    except Exception:
-        df = pd.DataFrame(columns=["Name", "Date", "Time"])  # empty
+    if USE_DB:
+        try:
+            rows = dbmod.fetch_month(year, month)
+            df = pd.DataFrame(rows)
+        except Exception:
+            df = pd.DataFrame(columns=["Name", "Date", "Time"])  # empty
+    else:
+        try:
+            df = pd.read_csv(path, parse_dates=["Date"])
+        except Exception:
+            df = pd.DataFrame(columns=["Name", "Date", "Time"])  # empty
 
     if not df.empty:
         # Normalize Date to date only
