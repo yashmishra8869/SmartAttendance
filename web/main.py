@@ -8,6 +8,7 @@ import uvicorn
 import numpy as np
 import pandas as pd
 import os
+import logging
 
 from .face_utils import (
     ROOT_DIR,
@@ -31,6 +32,7 @@ from .face_utils import (
 )
 
 app = FastAPI(title="SmartAttendanceWeb")
+logger = logging.getLogger("smartattendance")
 
 static_dir = Path(__file__).resolve().parent / "static"
 templates_dir = Path(__file__).resolve().parent / "templates"
@@ -39,6 +41,11 @@ templates_dir.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 templates = Jinja2Templates(directory=str(templates_dir))
+
+if not os.getenv("SMARTATTENDANCE_DB_URL", "").strip():
+    logger.warning(
+        "SMARTATTENDANCE_DB_URL is not set; attendance and face data will be stored on ephemeral disk and can disappear after redeploys or restarts."
+    )
 
 
 @app.exception_handler(Exception)
