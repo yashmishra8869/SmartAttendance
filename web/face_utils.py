@@ -90,6 +90,12 @@ def normalize_name(name: str) -> str:
 
 
 def load_encodings(path: Path = ENCODINGS_PATH) -> Dict[str, List]:
+    if USE_DB:
+        try:
+            return dbmod.load_encodings()
+        except Exception:
+            return {"encodings": [], "names": []}
+
     import pickle
     if not path.exists():
         return {"encodings": [], "names": []}
@@ -104,6 +110,14 @@ def load_encodings(path: Path = ENCODINGS_PATH) -> Dict[str, List]:
 
 
 def save_encodings(data: Dict[str, List], path: Path = ENCODINGS_PATH) -> None:
+    if USE_DB:
+        try:
+            with enc_lock:
+                dbmod.save_encodings(data)
+        except Exception:
+            pass
+        return
+
     import pickle
     with enc_lock:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -48,12 +48,33 @@ Python packages (installed via `pip`):
 4) View attendance logs
 - Check `attendance.csv` for entries with headers: Name, Date, Time.
 
+## Free-First Deployment (Render + Free Postgres)
+If you deploy on Render Free, local files are ephemeral. Use a free Postgres DB for persistence.
+
+Recommended free providers:
+- Neon (Postgres free tier)
+- Supabase (Postgres free tier)
+
+Steps:
+1. Create a free Postgres database and copy the connection string.
+2. In Render service environment variables, set:
+   - `SMARTATTENDANCE_DB_URL=<your_postgres_connection_string>`
+3. Redeploy.
+
+What gets persisted in DB when `SMARTATTENDANCE_DB_URL` is set:
+- Attendance records
+- Face encodings (registered student vectors)
+
+Notes:
+- Without `SMARTATTENDANCE_DB_URL`, the app falls back to local files (`attendance.csv`, `encodings.pkl`).
+- With DB enabled, you can stay on Render Free without paying for a persistent disk.
+
 ## Files
-- `register_student.py` — Register students and build `encodings.pkl`.
-- `recognize_and_log.py` — Recognize faces in real time and log attendance to `attendance.csv`.
-- `encodings.pkl` — Auto-created face embeddings database.
-- `attendance.csv` — Auto-created attendance log with headers.
-- `requirements.txt` — Dependencies list.
+- `register_student.py` ï¿½ Register students and build `encodings.pkl`.
+- `recognize_and_log.py` ï¿½ Recognize faces in real time and log attendance to `attendance.csv`.
+- `encodings.pkl` ï¿½ Auto-created face embeddings database.
+- `attendance.csv` ï¿½ Auto-created attendance log with headers.
+- `requirements.txt` ï¿½ Dependencies list.
 
 ## How It Works
 1. Registration
@@ -68,7 +89,7 @@ Python packages (installed via `pip`):
 - On the first match per day, writes to `attendance.csv`.
 
 ## Tips and Troubleshooting
-- If recognition is inconsistent, collect more samples per student (15–30 is typical).
+- If recognition is inconsistent, collect more samples per student (15ï¿½30 is typical).
 - Good lighting and frontal face alignment improve accuracy.
 - If `face_recognition` installation fails, install a compatible `dlib` wheel for your Python version and OS.
 - To reset the database, delete `encodings.pkl`. To clear attendance, delete `attendance.csv`.

@@ -1,11 +1,11 @@
 from __future__ import annotations
-from dataclasses import asdict, dataclass
 from datetime import date, datetime, time
-from typing import Iterable, List, Optional, Dict
+from typing import List, Optional, Dict
 import os
+import pickle
 
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Date, Time, DateTime, UniqueConstraint
+    create_engine, Column, Integer, String, Date, Time, DateTime, UniqueConstraint, LargeBinary
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -44,6 +44,15 @@ class Attendance(Base):
     __table_args__ = (
         UniqueConstraint("name", "date", name="uq_attendance_name_date"),
     )
+
+
+class FaceEncoding(Base):
+    __tablename__ = "face_encodings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False, index=True)
+    encoding_blob = Column(LargeBinary, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 def ensure_tables() -> None:
@@ -140,3 +149,40 @@ def recent_rows(limit: int = 5) -> List[Dict]:
             {"Name": r.name, "Date": r.date, "Time": r.time.strftime("%H:%M:%S")}
             for r in rows
         ]
+
+
+def load_encodings() -> Dict[str, List]:
+    """Load all face encodings from DB in the same shape as pickle storage."""
+    names: List[str] = []
+    encodings: List = []
+    with get_session() as sess:
+        rows = sess.query(FaceEncoding).order_by(FaceEncoding.id.asc()).all()
+        for r in rows:
+            try:
+                enc = pickle.loads(r.encoding_blob)
+            except Exception:
+                continue
+            names.append(_def_norm(r.name))
+            encodings.append(enc)
+    return {"encodings": encodings, "names": names}
+
+
+def save_encodings(data: Dict[str, List]) -> None:
+    """Replace face encodings in DB with the provided dataset."""
+    encs = data.get("encodings", []) if isinstance(data, dict) else []
+    names = data.get("names", []) if isinstance(data, dict) else []
+    if not isinstance(encs, list) or not isinstance(names, list) or len(encs) != len(names):
+        return
+
+    with get_session() as sess:
+        sess.query(FaceEncoding).delete()
+        for enc, nm in zip(encs, names):
+            try:
+                blob = pickle.dumps(enc, protocol=pickle.HIGHEST_PROTOCOL)
+            except Exception:
+                continue
+            sess.add(FaceEncoding(name=_def_norm(nm), encoding_blob=blob, created_at=datetime.utcnow()))
+        try:
+            sess.commit()
+        except Exception:
+            sess.rollback()
