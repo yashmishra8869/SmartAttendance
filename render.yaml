@@ -2,10 +2,6 @@ services:
   - type: web
     name: smart-attendance
     env: docker
-    plan: starter
+    plan: free
     autoDeploy: true
     healthCheckPath: /health
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
