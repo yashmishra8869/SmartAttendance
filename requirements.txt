@@ -7,4 +7,5 @@ uvicorn[standard]
 jinja2
 python-multipart
 SQLAlchemy
+psycopg2-binary
 pymysql

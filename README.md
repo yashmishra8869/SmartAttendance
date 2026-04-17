@@ -11,7 +11,7 @@ The app supports two storage modes:
 1. CSV/file mode for local development.
 2. Database mode for deployment persistence.
 
-If `SMARTATTENDANCE_DB_URL` is set, the app stores attendance records and face encodings in PostgreSQL instead of local files. This is the mode you want on Render free tier, because local disk is not persistent there.
+If `SMARTATTENDANCE_DB_URL`, `DATABASE_URL`, `POSTGRES_URL`, or `POSTGRESQL_URL` is set, the app stores attendance records and face encodings in PostgreSQL instead of local files. This is the mode you want on Render free tier, because local disk is not persistent there.
 
 Recommended setup
 -----------------
@@ -21,6 +21,8 @@ Recommended setup
 3. In Render, open your service settings and add this environment variable:
 
 	`SMARTATTENDANCE_DB_URL=postgresql+psycopg2://USER:PASSWORD@HOST:PORT/DBNAME`
+
+   You can also use `DATABASE_URL` if your provider supplies that name.
 
 4. Redeploy the service.
 
@@ -33,7 +35,7 @@ What this stores
 Local development
 -----------------
 
-For local use, you can run the app without `SMARTATTENDANCE_DB_URL`. In that case it falls back to file-based storage under the project data directory.
+For local use, you can run the app without a Postgres URL. In that case it falls back to file-based storage under the project data directory.
 
 Notes
 -----

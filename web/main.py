@@ -10,6 +10,7 @@ import pandas as pd
 import os
 import logging
 
+from . import db as dbmod
 from .face_utils import (
     ROOT_DIR,
     ENCODINGS_PATH,
@@ -42,9 +43,9 @@ templates_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 templates = Jinja2Templates(directory=str(templates_dir))
 
-if not os.getenv("SMARTATTENDANCE_DB_URL", "").strip():
+if not dbmod.DB_URL:
     logger.warning(
-        "SMARTATTENDANCE_DB_URL is not set; attendance and face data will be stored on ephemeral disk and can disappear after redeploys or restarts."
+        "No supported Postgres URL is configured; attendance and face data will be stored on ephemeral disk and can disappear after redeploys or restarts."
     )
 
 

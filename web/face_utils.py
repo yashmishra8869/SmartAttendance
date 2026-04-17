@@ -22,7 +22,23 @@ ROOT_DIR = DATA_DIR
 _ATT_DIR_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_DIR")
 _ATT_CSV_ENV = os.getenv("SMARTATTENDANCE_ATTENDANCE_CSV")
 _ENC_PATH_ENV = os.getenv("SMARTATTENDANCE_ENCODINGS_PATH")
-_DB_URL = os.getenv("SMARTATTENDANCE_DB_URL", "").strip()
+def _resolve_db_url() -> str:
+    candidates = [
+        os.getenv("SMARTATTENDANCE_DB_URL", ""),
+        os.getenv("DATABASE_URL", ""),
+        os.getenv("POSTGRES_URL", ""),
+        os.getenv("POSTGRESQL_URL", ""),
+    ]
+    for raw in candidates:
+        value = str(raw).strip()
+        if value:
+            if value.startswith("postgres://"):
+                value = "postgresql+psycopg2://" + value[len("postgres://"):]
+            return value
+    return ""
+
+
+_DB_URL = _resolve_db_url()
 USE_DB = bool(_DB_URL)
 
 if USE_DB:

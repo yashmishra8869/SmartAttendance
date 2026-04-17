@@ -9,7 +9,23 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-DB_URL = os.getenv("SMARTATTENDANCE_DB_URL", "").strip()
+def _resolve_db_url() -> str:
+    candidates = [
+        os.getenv("SMARTATTENDANCE_DB_URL", ""),
+        os.getenv("DATABASE_URL", ""),
+        os.getenv("POSTGRES_URL", ""),
+        os.getenv("POSTGRESQL_URL", ""),
+    ]
+    for raw in candidates:
+        value = str(raw).strip()
+        if value:
+            if value.startswith("postgres://"):
+                value = "postgresql+psycopg2://" + value[len("postgres://"):]
+            return value
+    return ""
+
+
+DB_URL = _resolve_db_url()
 
 Base = declarative_base()
 _engine = None
