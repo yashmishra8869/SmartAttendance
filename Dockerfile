@@ -32,9 +32,9 @@ COPY . .
 RUN mkdir -p /data \
     && chown -R root:root /data
 
-# Default port; platform will override via PORT env
-ENV PORT=8000
-EXPOSE 8000
+# Default port aligned with Render's web service default.
+ENV PORT=10000
+EXPOSE 10000
 
 # Start FastAPI with Uvicorn
 CMD ["sh", "-c", "uvicorn web.main:app --host 0.0.0.0 --port ${PORT}"]
