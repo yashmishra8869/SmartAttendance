@@ -96,12 +96,20 @@ async def dashboard(request: Request, month: str = None):
         year, mo = now.year, now.month
     stats = compute_monthly_attendance(ATTENDANCE_CSV, year, mo)
     matrix = compute_monthly_presence(ATTENDANCE_CSV, year, mo)
-    return templates.TemplateResponse("dashboard.html", {"request": request, "month": f"{year:04d}-{mo:02d}", "stats": stats, "matrix": matrix})
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={"request": request, "month": f"{year:04d}-{mo:02d}", "stats": stats, "matrix": matrix},
+    )
 
 
 @app.get("/students", response_class=HTMLResponse)
 async def students(request: Request):
-    return templates.TemplateResponse("students.html", {"request": request, "students": _students_with_counts()})
+    return templates.TemplateResponse(
+        request=request,
+        name="students.html",
+        context={"request": request, "students": _students_with_counts()},
+    )
 
 
 @app.post("/students/remove")
@@ -117,7 +125,11 @@ async def students_remove(names: str = Form(...)):
 
 @app.get("/scan", response_class=HTMLResponse)
 async def scan(request: Request):
-    return templates.TemplateResponse("scan.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request,
+        name="scan.html",
+        context={"request": request},
+    )
 
 
 @app.get("/download/attendance.csv")
