@@ -59,6 +59,25 @@ DEBUG = False
 DEFAULT_TOLERANCE = 0.62
 
 
+def _parse_mixed_dates(series: pd.Series) -> pd.Series:
+    """Parse mixed date strings (e.g. MM/DD/YYYY and YYYY-MM-DD) safely."""
+    s = series.astype(str).str.strip()
+    try:
+        parsed = pd.to_datetime(s, errors="coerce", format="mixed")
+    except TypeError:
+        parsed = pd.to_datetime(s, errors="coerce")
+
+    missing = parsed.isna()
+    if missing.any():
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
+            parsed.loc[missing] = pd.to_datetime(s.loc[missing], errors="coerce", format=fmt)
+            missing = parsed.isna()
+            if not missing.any():
+                break
+
+    return parsed
+
+
 def normalize_name(name: str) -> str:
     """Canonicalize a student's name: trim, collapse spaces, title-case.
     Example: "  yAsH   mIshra " -> "Yash Mishra".
@@ -213,7 +232,7 @@ def _robust_match(enc: np.ndarray, known_encodings: List[np.ndarray], known_name
 
     centroids = _compute_centroids(known_encodings, known_names)
     cent = centroids.get(winner)
-    cent_dist = _euclid(enc, cent) if cent is not None else 1.0
+    cent_dist = _euclid(enc, cent) if cent is not None else 1.0  
 
     margin = 0.08
     ok_nn = winner_min <= 0.52
@@ -403,11 +422,12 @@ def _has_marked_today(name: str, path: Path = ATTENDANCE_CSV) -> bool:
         return False
     if df.empty:
         return False
-    today = pd.Timestamp.today().strftime("%Y-%m-%d")
+    today = pd.Timestamp.today().date()
     # normalize names when checking
     df["Name"] = df["Name"].astype(str).map(normalize_name)
+    df["DateParsed"] = _parse_mixed_dates(df["Date"])
     norm = normalize_name(name)
-    df_today = df[(df["Name"].astype(str) == norm) & (df["Date"] == today)]
+    df_today = df[(df["Name"].astype(str) == norm) & (df["DateParsed"].dt.date == today)]
     return not df_today.empty
 
 
@@ -430,10 +450,11 @@ def get_today_mark_time(name: str, path: Path = ATTENDANCE_CSV) -> Optional[str]
         return None
     if df.empty:
         return None
-    today = pd.Timestamp.today().strftime("%Y-%m-%d")
+    today = pd.Timestamp.today().date()
     df["Name"] = df["Name"].astype(str).map(normalize_name)
+    df["DateParsed"] = _parse_mixed_dates(df["Date"])
     norm = normalize_name(name)
-    df_today = df[(df["Name"].astype(str) == norm) & (df["Date"] == today)]
+    df_today = df[(df["Name"].astype(str) == norm) & (df["DateParsed"].dt.date == today)]
     if df_today.empty:
         return None
     try:
@@ -469,21 +490,20 @@ def compute_monthly_attendance(path: Path, year: int, month: int) -> List[Dict]:
                 all_names = sorted({normalize_name(nm) for nm in enc.get("names", [])}, key=lambda x: x.lower())
                 return [{"name": nm, "days_present": 0, "total_days": 0, "percent": 0.0} for nm in all_names]
             df = pd.DataFrame(rows)
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            df["Date"] = _parse_mixed_dates(df["Date"])
         except Exception:
             return []
     else:
         ensure_attendance_csv(path)
         try:
-            df = pd.read_csv(path, parse_dates=["Date"])
+            df = pd.read_csv(path)
         except Exception:
             return []
         if df.empty:
             return []
 
     # Normalize Date column
-    if df["Date"].dtype != "datetime64[ns]":
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["Date"] = _parse_mixed_dates(df["Date"])
     df = df.dropna(subset=["Date"])  # drop unparsable
     # Normalize names for grouping
     df["Name"] = df["Name"].astype(str).map(normalize_name)
@@ -556,14 +576,13 @@ def compute_monthly_presence(path: Path, year: int, month: int) -> Dict:
             df = pd.DataFrame(columns=["Name", "Date", "Time"])  # empty
     else:
         try:
-            df = pd.read_csv(path, parse_dates=["Date"])
+            df = pd.read_csv(path)
         except Exception:
             df = pd.DataFrame(columns=["Name", "Date", "Time"])  # empty
 
     if not df.empty:
         # Normalize Date to date only
-        if df["Date"].dtype != "datetime64[ns]":
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df["Date"] = _parse_mixed_dates(df["Date"])
         df = df.dropna(subset=["Date"])  # drop unparsable
         df["Day"] = df["Date"].dt.date
         # Normalize names
