@@ -22,6 +22,9 @@ WORKDIR /app
 # Upgrade pip and install dependencies first (better caching)
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip \
+    && pip install dlib-bin==19.24.6 \
+    && pip install face-recognition-models==0.3.0 \
+    && pip install face_recognition==1.3.0 --no-deps \
     && pip install -r requirements.txt
 
 # Copy the app source
