@@ -1,6 +1,7 @@
 opencv-python-headless
 numpy
 pandas
+Pillow
 fastapi
 uvicorn[standard]
 jinja2
