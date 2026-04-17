@@ -8,13 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # System packages
 # - libgl1, libglib2.0-0: needed by OpenCV wheels at runtime
-# - build-essential, cmake, pkg-config: needed to build dlib (dependency of face_recognition)
-# - libopenblas-dev, liblapack-dev, libx11-dev: math/X11 deps for dlib
+# - libx11-6: runtime dependency for dlib/OpenCV stack
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        libgl1 libglib2.0-0 \
-       build-essential cmake pkg-config \
-       libopenblas-dev liblapack-dev libx11-dev \
+         libx11-6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -22,7 +20,7 @@ WORKDIR /app
 # Upgrade pip and install dependencies first (better caching)
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip \
-    && pip install dlib-bin==19.24.6 \
+    && pip install --only-binary=:all: dlib-bin==19.24.6 \
     && pip install face-recognition-models==0.3.0 \
     && pip install face_recognition==1.3.0 --no-deps \
     && pip install -r requirements.txt
