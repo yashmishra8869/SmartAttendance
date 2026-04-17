@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import List
 from fastapi import FastAPI, File, UploadFile, Form, Request, Body
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -41,9 +41,30 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 templates = Jinja2Templates(directory=str(templates_dir))
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, _exc: Exception):
+    # Keep production responses generic while preserving server logs.
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+    return HTMLResponse(
+        content="<h1>Something went wrong</h1><p>Please refresh and try again.</p>",
+        status_code=500,
+    )
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.head("/")
+async def dashboard_head():
+    return Response(status_code=200)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return RedirectResponse(url="/static/favicon.svg", status_code=307)
 
 
 @app.get("/api/debug/state")
